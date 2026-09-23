@@ -1,0 +1,18 @@
+# build output
+bin/
+obj/
+[Dd]ebug/
+[Rr]elease/
+artifacts/
+*.user
+*.suo
+.vs/
+
+# secrets - never commit
+.npmrc
+.env
+.env.*
+!.env.example
+*.pem
+*.pfx
+*.p12

@@ -1,0 +1,58 @@
+name: Build and Publish Package
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Restore
+        run: dotnet restore
+
+      - name: Build
+        run: dotnet build -c Release --no-restore
+
+      - name: Test
+        run: dotnet run --project tests/Netdb.Observability.Tests -c Release --no-build
+        env:
+          TESTINGPLATFORM_TELEMETRY_OPTOUT: '1'
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/heads/main')
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Pack
+        run: |
+          mkdir -p artifacts
+          dotnet pack src/Netdb.Observability/Netdb.Observability.csproj \
+            -c Release -o ./artifacts
+
+      # --skip-duplicate so a push to main that did not bump <Version> is a
+      # no-op rather than a red build.
+      - name: Publish to GitHub Packages
+        env:
+          NUGET_SOURCE: https://nuget.pkg.github.com/${{ github.repository_owner }}/index.json
+        run: |
+          dotnet nuget push "./artifacts/*.nupkg" \
+            --api-key ${{ secrets.GITHUB_TOKEN }} \
+            --source "$NUGET_SOURCE" \
+            --skip-duplicate
