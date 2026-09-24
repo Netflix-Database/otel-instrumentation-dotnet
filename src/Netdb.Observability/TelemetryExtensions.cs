@@ -207,6 +207,6 @@ public static class TelemetryExtensions
 
         Log.Logger = logger.CreateLogger();
         builder.Logging.ClearProviders();
-        builder.Logging.AddSerilog(Log.Logger);
+        builder.Services.AddSerilog(Log.Logger);
     }
 }
