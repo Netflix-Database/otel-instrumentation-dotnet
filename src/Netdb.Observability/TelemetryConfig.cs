@@ -69,18 +69,18 @@ public sealed class TelemetryConfig
 
         var endpoint = Get("OTEL_EXPORTER_OTLP_ENDPOINT");
         if (string.IsNullOrWhiteSpace(endpoint))
-        {
             problems.Add("OTEL_EXPORTER_OTLP_ENDPOINT is required");
-        }
 
         // The full resource attribute set, or the dashboards cannot slice
         // by environment, region or instance.
         var attributes = ParseResourceAttributes(Get("OTEL_RESOURCE_ATTRIBUTES"));
         var serviceNameEnv = Get("OTEL_SERVICE_NAME");
         if (!string.IsNullOrWhiteSpace(serviceNameEnv) && !attributes.ContainsKey("service.name"))
-        {
             attributes["service.name"] = serviceNameEnv;
-        }
+
+        var gitSha = Get("GIT_SHA");
+        if (!string.IsNullOrWhiteSpace(gitSha)) attributes.TryAdd("service.version", gitSha);
+        attributes.TryAdd("service.instance.id", Environment.MachineName);
 
         foreach (var key in NetdbTelemetryDefaults.RequiredResourceAttributes)
         {

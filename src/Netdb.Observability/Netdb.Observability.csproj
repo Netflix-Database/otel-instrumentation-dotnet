@@ -9,7 +9,7 @@
     <GenerateDocumentationFile>true</GenerateDocumentationFile>
 
     <PackageId>Netdb.Observability</PackageId>
-    <Version>1.0.1</Version>
+    <Version>1.0.2</Version>
     <Description>Shared OpenTelemetry, logging, health and request-id wiring for Netdb .NET services.</Description>
     <RepositoryUrl>https://github.com/Netflix-Database/otel-instrumentation-dotnet</RepositoryUrl>
     <PackageLicenseExpression>MIT</PackageLicenseExpression>
@@ -19,9 +19,6 @@
     <FrameworkReference Include="Microsoft.AspNetCore.App" />
   </ItemGroup>
 
-  <!-- Request-id validation and name normalisation are internal because they
-       are not part of the supported surface, but they carry the security
-       behaviour worth testing directly. -->
   <ItemGroup>
     <InternalsVisibleTo Include="Netdb.Observability.Tests" />
   </ItemGroup>

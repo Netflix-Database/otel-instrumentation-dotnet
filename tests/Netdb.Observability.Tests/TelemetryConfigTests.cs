@@ -28,11 +28,51 @@ public class TelemetryConfigTests
             () => TelemetryConfig.Load(new Dictionary<string, string?>()));
 
         Assert.Contains("OTEL_EXPORTER_OTLP_ENDPOINT is required", ex.Message);
-        foreach (var attribute in NetdbTelemetryDefaults.RequiredResourceAttributes)
+        // service.instance.id always falls back to the machine name.
+        foreach (var attribute in NetdbTelemetryDefaults.RequiredResourceAttributes
+                     .Where(a => a != "service.instance.id"))
         {
             Assert.Contains(attribute, ex.Message);
         }
-        Assert.True(ex.Problems.Count >= 6, $"expected batched problems, got {ex.Problems.Count}");
+        Assert.True(ex.Problems.Count >= 5, $"expected batched problems, got {ex.Problems.Count}");
+    }
+
+    // The build SHA and container only exist at build and run time, so they
+    // must not have to be set by hand.
+    [Fact]
+    public void VersionAndInstance_FallBackToGitShaAndMachineName()
+    {
+        var config = TelemetryConfig.Load(Env(
+            ("OTEL_EXPORTER_OTLP_ENDPOINT", "http://collector:4317"),
+            ("OTEL_RESOURCE_ATTRIBUTES", "service.name=svc,deployment.environment.name=prod,cloud.region=eu-central-1"),
+            ("GIT_SHA", "deadbeef")));
+
+        Assert.Equal("deadbeef", config.ResourceAttributes["service.version"]);
+        Assert.Equal(Environment.MachineName, config.ResourceAttributes["service.instance.id"]);
+    }
+
+    [Fact]
+    public void ExplicitAttributes_WinOverFallbacks()
+    {
+        var config = TelemetryConfig.Load(Env(
+            ("OTEL_EXPORTER_OTLP_ENDPOINT", "http://collector:4317"),
+            ("OTEL_RESOURCE_ATTRIBUTES", ValidAttributes),
+            ("GIT_SHA", "deadbeef")));
+
+        Assert.Equal("abc123", config.ResourceAttributes["service.version"]);
+        Assert.Equal("i-1", config.ResourceAttributes["service.instance.id"]);
+    }
+
+    // No silent "dev" in production: a build without GIT_SHA still fails.
+    [Fact]
+    public void MissingGitSha_IsReported()
+    {
+        var ex = Assert.Throws<TelemetryConfigurationException>(() => TelemetryConfig.Load(Env(
+            ("OTEL_EXPORTER_OTLP_ENDPOINT", "http://collector:4317"),
+            ("OTEL_RESOURCE_ATTRIBUTES", "service.name=svc,deployment.environment.name=prod,cloud.region=eu-central-1"))));
+
+        Assert.Contains("service.version", ex.Message);
+        Assert.Single(ex.Problems);
     }
 
     [Fact]
