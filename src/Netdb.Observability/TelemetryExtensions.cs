@@ -36,6 +36,21 @@ public sealed class NetdbTelemetryOptions
     /// trace volume and the request-rate panels.
     /// </summary>
     public IReadOnlyCollection<string> IgnoredPaths { get; set; } = [];
+
+    /// <summary>
+    /// Extra Serilog setup, applied after this package's own. Use it to layer
+    /// a service's <c>ReadFrom.Configuration(builder.Configuration)</c>, extra
+    /// filters or extra sinks on top - the redaction enricher, the correlation
+    /// enricher and the OTLP sink are already in place and are not lost.
+    /// </summary>
+    public Action<Serilog.LoggerConfiguration>? ConfigureLogging { get; set; }
+
+    /// <summary>
+    /// Skips this package's console sink, for services that declare their own
+    /// sinks in appsettings and would otherwise log to the console twice. The
+    /// OTLP sink is always kept.
+    /// </summary>
+    public bool SuppressDefaultConsoleSink { get; set; }
 }
 
 /// <summary>Wires OpenTelemetry and Serilog the same way in every service.</summary>
@@ -69,7 +84,7 @@ public static class TelemetryExtensions
 
         builder.Services.AddSingleton(config);
 
-        ConfigureSerilog(builder, config);
+        ConfigureSerilog(builder, config, options);
 
         // No exporters at all in development. Serilog is still wired
         // above, so dev keeps pretty console logs.
@@ -134,7 +149,10 @@ public static class TelemetryExtensions
     /// Serilog everywhere, with the same field names the Node and Go services
     /// emit.
     /// </summary>
-    private static void ConfigureSerilog(IHostApplicationBuilder builder, TelemetryConfig config)
+    private static void ConfigureSerilog(
+        IHostApplicationBuilder builder,
+        TelemetryConfig config,
+        NetdbTelemetryOptions options)
     {
         var logLevel = Environment.GetEnvironmentVariable("LOG_LEVEL") switch
         {
@@ -158,21 +176,34 @@ public static class TelemetryExtensions
         if (config.Disabled)
         {
             // Human-readable output for local development.
-            logger = logger.WriteTo.Console(
-                outputTemplate: "[{Timestamp:HH:mm:ss.fff} {Level:u3}] {Message:lj}{NewLine}{Exception}");
+            if (!options.SuppressDefaultConsoleSink)
+            {
+                logger = logger.WriteTo.Console(
+                    outputTemplate: "[{Timestamp:HH:mm:ss.fff} {Level:u3}] {Message:lj}{NewLine}{Exception}");
+            }
         }
         else
         {
-            logger = logger
-                .WriteTo.Console(new Serilog.Formatting.Compact.CompactJsonFormatter())
-                // Logs over OTLP/gRPC like traces and metrics.
-                .WriteTo.OpenTelemetry(o =>
-                {
-                    o.Protocol = Serilog.Sinks.OpenTelemetry.OtlpProtocol.Grpc;
-                    o.ResourceAttributes = config.ResourceAttributes
-                        .ToDictionary(kv => kv.Key, kv => (object)kv.Value);
-                });
+            if (!options.SuppressDefaultConsoleSink)
+            {
+                logger = logger.WriteTo.Console(new Serilog.Formatting.Compact.CompactJsonFormatter());
+            }
+
+            // Logs over OTLP/gRPC like traces and metrics. Never suppressed:
+            // dropping it would take the service off the shared dashboard,
+            // which is the whole point of this package.
+            logger = logger.WriteTo.OpenTelemetry(o =>
+            {
+                o.Protocol = Serilog.Sinks.OpenTelemetry.OtlpProtocol.Grpc;
+                o.ResourceAttributes = config.ResourceAttributes
+                    .ToDictionary(kv => kv.Key, kv => (object)kv.Value);
+            });
         }
+
+        // Applied last, so a service can raise or lower levels, add filters, or
+        // read its own sinks from appsettings without losing the redaction
+        // enricher or the OTLP sink above.
+        options.ConfigureLogging?.Invoke(logger);
 
         Log.Logger = logger.CreateLogger();
         builder.Logging.ClearProviders();
