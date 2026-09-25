@@ -1,4 +1,4 @@
-using System.Text.Json;
+﻿using System.Text.Json;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Diagnostics.HealthChecks;
 using Microsoft.AspNetCore.Http;
@@ -103,6 +103,85 @@ public static class NetdbHealthChecksBuilderExtensions
             critical ? HealthStatus.Unhealthy : HealthStatus.Degraded,
             [HealthEndpoints.ReadyTag],
             timeout ?? DefaultTimeout));
+    }
+
+    /// <summary>
+    /// Registers another Netdb service as a readiness dependency, probed over
+    /// HTTP.
+    /// </summary>
+    /// <param name="builder">The health checks builder.</param>
+    /// <param name="name">Name reported in the response body.</param>
+    /// <param name="url">
+    /// Usually the dependency's <c>/livez</c>: when all this service needs is
+    /// that the dependency is reachable, its readiness is its own concern.
+    /// <para>
+    /// Use <c>/readyz</c> when this service calls the dependency on the request
+    /// path and needs it to actually be able to serve - for example an app that
+    /// refreshes tokens server-side needs more from the auth service than that
+    /// its process is up. A readiness probe answers 200 while the dependency is
+    /// merely degraded, so this registers its hard failures either way.
+    /// </para>
+    /// </param>
+    /// <param name="critical">
+    /// Defaults to false, and should almost always stay false. A service
+    /// reached over HTTP is something to degrade on, not to go unready for -
+    /// marking it critical means its blip pulls this service out of the load
+    /// balancer too, turning one outage into several.
+    /// </param>
+    /// <param name="timeout">Per-check timeout. Defaults to 3s.</param>
+    public static IHealthChecksBuilder AddHttpDependency(
+        this IHealthChecksBuilder builder,
+        string name,
+        Uri url,
+        bool critical = false,
+        TimeSpan? timeout = null)
+    {
+        ArgumentNullException.ThrowIfNull(builder);
+        ArgumentNullException.ThrowIfNull(url);
+
+        // Pooled handlers, so a probe every few seconds does not burn sockets.
+        builder.Services.AddHttpClient();
+
+        return builder.Add(new HealthCheckRegistration(
+            name,
+            sp => new HttpDependencyHealthCheck(sp.GetRequiredService<IHttpClientFactory>(), url),
+            critical ? HealthStatus.Unhealthy : HealthStatus.Degraded,
+            [HealthEndpoints.ReadyTag],
+            timeout ?? DefaultTimeout));
+    }
+
+    private sealed class HttpDependencyHealthCheck(IHttpClientFactory factory, Uri url) : IHealthCheck
+    {
+        public async Task<HealthCheckResult> CheckHealthAsync(
+            HealthCheckContext context,
+            CancellationToken cancellationToken = default)
+        {
+            try
+            {
+                using HttpClient client = factory.CreateClient();
+
+                // Only the status line is needed, and the body is never read.
+                using HttpResponseMessage response = await client
+                    .GetAsync(url, HttpCompletionOption.ResponseHeadersRead, cancellationToken)
+                    .ConfigureAwait(false);
+
+                return response.IsSuccessStatusCode
+                    ? HealthCheckResult.Healthy()
+                    : new HealthCheckResult(
+                        context.Registration.FailureStatus,
+                        $"{url} returned {(int)response.StatusCode}");
+            }
+            catch (OperationCanceledException)
+            {
+                return new HealthCheckResult(
+                    context.Registration.FailureStatus,
+                    $"{context.Registration.Name} check timed out");
+            }
+            catch (Exception ex)
+            {
+                return new HealthCheckResult(context.Registration.FailureStatus, ex.Message);
+            }
+        }
     }
 
     private sealed class DelegateHealthCheck(Func<CancellationToken, Task> probe) : IHealthCheck
